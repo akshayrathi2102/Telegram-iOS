@@ -5,6 +5,7 @@ import AsyncDisplayKit
 import SwiftSignalKit
 import TelegramPresentationData
 import SwitchNode
+import GlassSwitchNode
 import AppBundle
 import ComponentFlow
 
@@ -67,7 +68,7 @@ public class ItemListSwitchItem: ListViewItem, ItemListItem {
     
     public func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, previousItem: ListViewItem?, nextItem: ListViewItem?, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
         async {
-            let node = ItemListSwitchItemNode(type: self.type)
+            let node = ItemListSwitchItemNode(type: self.type, systemStyle: self.systemStyle)
             let (layout, apply) = node.asyncLayout()(self, params, itemListNeighbors(item: self, topItem: previousItem as? ItemListItem, bottomItem: nextItem as? ItemListItem))
             
             node.contentSize = layout.contentSize
@@ -145,6 +146,33 @@ extension SwitchNode: ItemListSwitchNodeImpl {
 extension IconSwitchNode: ItemListSwitchNodeImpl {
 }
 
+extension GlassSwitchNode: ItemListSwitchNodeImpl {
+    public var frameColor: UIColor {
+        get { offTrackColor }
+        set { offTrackColor = newValue }
+    }
+    
+    public var contentColor: UIColor {
+        get { onTintColor }
+        set { onTintColor = newValue }
+    }
+    
+    public var handleColor: UIColor {
+        get { .white }
+        set { /* Glass switch handles this internally */ }
+    }
+    
+    public var positiveContentColor: UIColor {
+        get { onTintColor }
+        set { onTintColor = newValue }
+    }
+    
+    public var negativeContentColor: UIColor {
+        get { offTrackColor }
+        set { /* Glass switch uses frameColor for off state, ignore negativeContentColor */ }
+    }
+}
+
 public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
     private let backgroundNode: ASDisplayNode
     private let topStripeNode: ASDisplayNode
@@ -171,7 +199,7 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
         return self.item?.tag
     }
     
-    public init(type: ItemListSwitchItemNodeType) {
+    public init(type: ItemListSwitchItemNodeType, systemStyle: ItemListSystemStyle = .legacy) {
         self.backgroundNode = ASDisplayNode()
         self.backgroundNode.isLayerBacked = true
         self.backgroundNode.backgroundColor = .white
@@ -193,11 +221,16 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
         self.titleNode.anchorPoint = CGPoint()
         self.titleNode.isUserInteractionEnabled = false
         
-        switch type {
-            case .regular:
-                self.switchNode = SwitchNode()
-            case .icon:
-                self.switchNode = IconSwitchNode()
+        switch systemStyle {
+            case .glass:
+                self.switchNode = GlassSwitchNode()
+            case .legacy:
+                switch type {
+                    case .regular:
+                        self.switchNode = SwitchNode()
+                    case .icon:
+                        self.switchNode = IconSwitchNode()
+                }
         }
         
         self.highlightedBackgroundNode = ASDisplayNode()
@@ -230,8 +263,20 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
     override public func didLoad() {
         super.didLoad()
         
-        (self.switchNode.view as? UISwitch)?.addTarget(self, action: #selector(self.switchValueChanged(_:)), for: .valueChanged)
+        if let glassSwitchNode = self.switchNode as? GlassSwitchNode {
+            glassSwitchNode.valueChanged = { [weak self] value in
+                self?.glassSwitchValueChanged(value)
+            }
+        } else {
+            (self.switchNode.view as? UISwitch)?.addTarget(self, action: #selector(self.switchValueChanged(_:)), for: .valueChanged)
+        }
         self.switchGestureNode.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
+    }
+    
+    private func glassSwitchValueChanged(_ value: Bool) {
+        if let item = self.item {
+            item.updated(value)
+        }
     }
     
     func asyncLayout() -> (_ item: ItemListSwitchItem, _ params: ListViewItemLayoutParams, _ insets: ItemListNeighbors) -> (ListViewItemNodeLayout, (Bool) -> Void) {
@@ -498,7 +543,15 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
                         }
                     }
                     
-                    if let switchView = strongSelf.switchNode.view as? UISwitch {
+                    if let glassSwitchNode = strongSelf.switchNode as? GlassSwitchNode {
+                        let switchSize = glassSwitchNode.calculateSizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+                        
+                        transition.updateFrame(node: strongSelf.switchNode, frame: CGRect(origin: CGPoint(x: params.width - params.rightInset - switchSize.width - 15.0, y: floor((contentSize.height - switchSize.height) / 2.0)), size: switchSize))
+                        strongSelf.switchGestureNode.frame = strongSelf.switchNode.frame
+                        if glassSwitchNode.isOn != item.value {
+                            glassSwitchNode.setOn(item.value, animated: animated)
+                        }
+                    } else if let switchView = strongSelf.switchNode.view as? UISwitch {
                         if strongSelf.switchNode.bounds.size.width.isZero {
                             switchView.sizeToFit()
                         }
@@ -596,7 +649,10 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
         if !item.enabled {
             return false
         }
-        if let switchNode = self.switchNode as? IconSwitchNode {
+        if let switchNode = self.switchNode as? GlassSwitchNode {
+            switchNode.isOn = !switchNode.isOn
+            item.updated(switchNode.isOn)
+        } else if let switchNode = self.switchNode as? IconSwitchNode {
             switchNode.isOn = !switchNode.isOn
             item.updated(switchNode.isOn)
         } else if let switchNode = self.switchNode as? SwitchNode {
@@ -664,7 +720,18 @@ public class ItemListSwitchItemNode: ListViewItemNode, ItemListItemNode {
     }
     
     @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
-        if let item = self.item, let switchView = self.switchNode.view as? UISwitch, case .ended = recognizer.state {
+        guard let item = self.item, case .ended = recognizer.state else {
+            return
+        }
+        
+        if let glassSwitchNode = self.switchNode as? GlassSwitchNode {
+            if item.enabled && !item.displayLocked {
+                let value = glassSwitchNode.isOn
+                item.updated(!value)
+            } else {
+                item.activatedWhileDisabled()
+            }
+        } else if let switchView = self.switchNode.view as? UISwitch {
             if item.enabled && !item.displayLocked {
                 let value = switchView.isOn
                 item.updated(!value)

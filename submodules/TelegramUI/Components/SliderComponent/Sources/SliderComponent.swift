@@ -5,6 +5,7 @@ import AsyncDisplayKit
 import TelegramPresentationData
 import LegacyComponents
 import ComponentFlow
+import GlassSwitchNode
 
 public final class SliderComponent: Component {
     public final class Discrete: Equatable {
@@ -68,6 +69,7 @@ public final class SliderComponent: Component {
     
     public let content: Content
     public let useNative: Bool
+    public let useGlass: Bool
     public let trackBackgroundColor: UIColor
     public let trackForegroundColor: UIColor
     public let minTrackForegroundColor: UIColor?
@@ -78,6 +80,7 @@ public final class SliderComponent: Component {
     public init(
         content: Content,
         useNative: Bool = false,
+        useGlass: Bool = false,
         trackBackgroundColor: UIColor,
         trackForegroundColor: UIColor,
         minTrackForegroundColor: UIColor? = nil,
@@ -87,6 +90,7 @@ public final class SliderComponent: Component {
     ) {
         self.content = content
         self.useNative = useNative
+        self.useGlass = useGlass
         self.trackBackgroundColor = trackBackgroundColor
         self.trackForegroundColor = trackForegroundColor
         self.minTrackForegroundColor = minTrackForegroundColor
@@ -97,6 +101,9 @@ public final class SliderComponent: Component {
     
     public static func ==(lhs: SliderComponent, rhs: SliderComponent) -> Bool {
         if lhs.content != rhs.content {
+            return false
+        }
+        if lhs.useGlass != rhs.useGlass {
             return false
         }
         if lhs.trackBackgroundColor != rhs.trackBackgroundColor {
@@ -124,12 +131,13 @@ public final class SliderComponent: Component {
     public final class View: UIView {
         private var nativeSliderView: SliderView?
         private var sliderView: TGPhotoEditorSliderView?
+        private var glassSliderView: GlassSlider?
         
         private var component: SliderComponent?
         private weak var state: EmptyComponentState?
         
         public var hitTestTarget: UIView? {
-            return self.sliderView
+            return self.glassSliderView ?? self.sliderView
         }
         
         override public init(frame: CGRect) {
@@ -156,6 +164,54 @@ public final class SliderComponent: Component {
             self.state = state
             
             let size = CGSize(width: availableSize.width, height: 44.0)
+            
+            // Use GlassSlider when useGlass is true
+            if component.useGlass {
+                // Remove other slider types if present
+                self.nativeSliderView?.removeFromSuperview()
+                self.nativeSliderView = nil
+                self.sliderView?.removeFromSuperview()
+                self.sliderView = nil
+                
+                let glassSlider: GlassSlider
+                if let current = self.glassSliderView {
+                    glassSlider = current
+                } else {
+                    glassSlider = GlassSlider()
+                    glassSlider.minimumValue = 0.0
+                    glassSlider.maximumValue = 1.0
+                    
+                    glassSlider.valueChanged = { [weak self] value in
+                        self?.glassSliderValueChanged(CGFloat(value))
+                    }
+                    
+                    self.addSubview(glassSlider)
+                    self.glassSliderView = glassSlider
+                }
+                
+                switch component.content {
+                case let .continuous(continuous):
+                    glassSlider.minimumValue = Float(continuous.minValue ?? 0.0)
+                    glassSlider.maximumValue = 1.0
+                    if glassSlider.value != Float(continuous.value) {
+                        glassSlider.value = Float(continuous.value)
+                    }
+                case let .discrete(discrete):
+                    glassSlider.minimumValue = 0.0
+                    glassSlider.maximumValue = Float(discrete.valueCount - 1)
+                    if glassSlider.value != Float(discrete.value) {
+                        glassSlider.value = Float(discrete.value)
+                    }
+                }
+                
+                transition.setFrame(view: glassSlider, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: size))
+                
+                return size
+            }
+            
+            // Remove glass slider if not using glass
+            self.glassSliderView?.removeFromSuperview()
+            self.glassSliderView = nil
             
             if #available(iOS 26.0, *), component.useNative {
                 let sliderView: SliderView
@@ -319,6 +375,18 @@ public final class SliderComponent: Component {
                 discrete.valueUpdated(Int(floatValue))
             case let .continuous(continuous):
                 continuous.valueUpdated(floatValue)
+            }
+        }
+        
+        private func glassSliderValueChanged(_ value: CGFloat) {
+            guard let component = self.component else {
+                return
+            }
+            switch component.content {
+            case let .discrete(discrete):
+                discrete.valueUpdated(Int(value))
+            case let .continuous(continuous):
+                continuous.valueUpdated(value)
             }
         }
     }

@@ -19,6 +19,7 @@ swift_library(
         "//submodules/Markdown:Markdown",
         "//submodules/ProgressNavigationButtonNode:ProgressNavigationButtonNode",
         "//submodules/SwitchNode:SwitchNode",
+        "//submodules/GlassSwitchNode:GlassSwitchNode",
         "//submodules/AnimatedStickerNode:AnimatedStickerNode",
         "//submodules/TelegramAnimatedStickerNode:TelegramAnimatedStickerNode",
         "//submodules/CheckNode:CheckNode",

@@ -279,6 +279,7 @@ class EnergyUsageBatteryLevelItemNode: ListViewItemNode {
                         strongSelf.batteryForegroundNode.frame = strongSelf.batteryBackgroundNode.frame
                     }
                     
+                    let useGlassStyle = item.systemStyle == .glass
                     let sliderSize = strongSelf.slider.update(
                         transition: .immediate,
                         component: AnyComponent(
@@ -290,7 +291,8 @@ class EnergyUsageBatteryLevelItemNode: ListViewItemNode {
                                         self?.item?.updated(Int32(rescaleSliderToBatteryValue(value) * 100.0))
                                     }
                                 )),
-                                useNative: true,
+                                useNative: !useGlassStyle,
+                                useGlass: useGlassStyle,
                                 trackBackgroundColor: item.theme.list.itemSwitchColors.frameColor,
                                 trackForegroundColor: item.theme.list.itemAccentColor
                             )
